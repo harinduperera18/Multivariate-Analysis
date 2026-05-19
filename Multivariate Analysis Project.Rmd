@@ -1,0 +1,384 @@
+---
+title: "Multivariate Analysis Project"
+author: "Harindu Perera"
+date: "2026-04-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+str(data)
+```
+
+
+```{r packages Libraries, echo=FALSE, message=FALSE, warning=FALSE}
+
+#install.packages("ggplot2")
+#install.packages("corrplot")
+#install.packages("factoextra")
+#install.packages("psych")
+#install.packages("MASS")
+#install.packages("CCA", dependencies = TRUE)
+#install.packages("CCP", dependencies = TRUE)
+#install.packages("candisc", dependencies = TRUE)
+
+library(corrplot)
+library(factoextra)
+library(psych)
+library(ggplot2)
+library(reshape2)
+library(CCA)
+library(CCP)
+library(candisc)
+library(MASS)
+
+```
+
+
+
+
+```{r}
+# DATA LOADING & PREPROCESSING
+
+data <- read.csv("student_mental_health_burnout_1M.csv")
+
+set.seed(123)
+
+library(corrplot)
+library(factoextra)
+library(psych)
+library(ggplot2)
+library(reshape2)
+library(CCA)
+library(CCP)
+library(candisc)
+library(MASS)
+
+# Convert categorical variables
+data$gender <- as.factor(data$gender)
+data$academic_year <- as.factor(data$academic_year)
+data$risk_level <- as.factor(data$risk_level)
+
+# Remove missing values
+data <- na.omit(data)
+
+# Remove outcome / derived and Discrete variables
+remove_vars <- c("mental_health_index", "dropout_risk","age")
+remove_vars <- remove_vars[remove_vars %in% colnames(data)]
+data <- data[, !(colnames(data) %in% remove_vars)]
+
+# Numeric subset
+student_num <- data[, sapply(data, is.numeric), drop = FALSE]
+
+# Outlier detection using numeric variables
+z_scores <- scale(student_num)
+outlier_rows <- apply(abs(z_scores) > 3, 1, any)
+outlier_count <- sum(outlier_rows)
+cat("Number of outlier rows:", outlier_count, "\n")
+
+# Remove outliers from BOTH full data and numeric data
+data <- data[!outlier_rows, ]
+student_num <- data[, sapply(data, is.numeric), drop = FALSE]
+```
+
+
+```{r}
+
+# PRINCIPAL COMPONENT ANALYSIS (PCA)
+
+# Correlation matrix
+cor_matrix <- cor(student_num, method = "spearman")
+
+cat("\nCorrelation Matrix:\n")
+print(round(cor_matrix, 2))
+
+corrplot(cor_matrix,method = "color",type = "upper",tl.col = "black",tl.cex = 0.7,addCoef.col = "black",number.cex = 0.5)
+
+# Apply PCA
+pca_result <- prcomp(student_num, scale. = TRUE)
+
+cat("\nObjects in PCA result:\n")
+print(names(pca_result))
+
+cat("\nVariable means used for centering:\n")
+print(pca_result$center)
+
+cat("\nVariable scales used for standardization:\n")
+print(pca_result$scale)
+
+# PCA loadings
+
+cat("\nPCA Loadings:\n")
+print(round(pca_result$rotation, 4))
+
+# PCA scores
+
+cat("\nFirst 6 PCA scores:\n")
+print(head(pca_result$x))
+
+# Standard deviations, eigenvalues
+
+cat("\nStandard deviations of PCs:\n")
+print(pca_result$sdev)
+
+VE <- pca_result$sdev^2
+cat("\nEigenvalues:\n")
+print(VE)
+
+PVE <- VE / sum(VE)
+cat("\nProportion of variance explained:\n")
+print(round(PVE, 3))
+
+cat("\nCumulative variance explained:\n")
+print(round(cumsum(PVE), 3))
+
+cat("\nPCs with eigenvalue > 1 (Kaiser criterion):\n")
+print(which(VE > 1))
+
+# Eigenvalue table
+
+eig.val <- get_eigenvalue(pca_result)
+cat("\nEigenvalue Table:\n")
+print(eig.val)
+
+# Scree plot
+
+fviz_eig(pca_result,addlabels = TRUE,ylim = c(0, 50),xlab = "Principal Components (PCs)",ylab = "Percentage of Variance Explained",main = "Scree Plot of Principal Components")
+
+# Quality of representation 
+
+var <- get_pca_var(pca_result)
+
+cat("\nQuality of representation:\n")
+print(head(var$cos2, ncol(student_num)))
+
+corrplot(var$cos2,is.corr = FALSE)
+
+# Top contributing variables to first 7 PCs
+
+loadings_df <- as.data.frame(pca_result$rotation)
+
+for (pc in colnames(loadings_df)[1:min(7, ncol(loadings_df))]) {
+  cat("\nTop variables for", pc, ":\n")
+  temp <- data.frame(
+    Variable = rownames(loadings_df),
+    Loading = loadings_df[[pc]]
+  )
+  temp <- temp[order(abs(temp$Loading), decreasing = TRUE), ]
+  temp$Loading <- round(temp$Loading, 4)
+  print(head(temp, 8))
+}
+```
+
+
+```{r}
+
+# FACTOR ANALYSIS (FA)
+
+# FA uses the same student_num
+fa_data <- student_num
+
+# KMO test
+
+cat("\nKMO Test:\n")
+kmo_result <- KMO(fa_data)
+print(kmo_result)
+
+# Bartlett's test
+
+cat("\nBartlett Test:\n")
+bartlett_result <- cortest.bartlett(cor(fa_data), n = nrow(fa_data))
+print(bartlett_result)
+
+# Parallel analysis
+
+fa.parallel(fa_data, fa = "fa", main = "Parallel Analysis for Factor Retention")
+
+# Fit factor model
+
+fa_model <- fa(fa_data,nfactors = 7,rotate = "varimax",fm = "ml")
+
+cat("\nFactor Analysis Summary:\n")
+print(fa_model)
+
+# Factor loadings
+
+loadings_df <- as.data.frame(unclass(fa_model$loadings))
+cat("\nFactor Loadings:\n")
+print(round(loadings_df, 4))
+
+# Top variables per factor
+
+result <- data.frame()
+
+for (f in colnames(loadings_df)) {
+  temp <- data.frame(
+    Factor = f,
+    Variable = rownames(loadings_df),
+    Loading = loadings_df[[f]]
+  )
+  temp <- temp[abs(temp$Loading) > 0.4, ]
+  temp <- temp[order(abs(temp$Loading), decreasing = TRUE), ]
+  result <- rbind(result, temp)
+}
+
+result$Loading <- round(result$Loading, 4)
+
+cat("\nTop Variables per Factor (|loading| > 0.4):\n")
+print(result)
+
+# Communalities
+
+cat("\nCommunalities:\n")
+print(round(fa_model$communality, 4))
+
+# Variance accounted 
+
+cat("\nVariance Accounted For:\n")
+print(round(fa_model$Vaccounted, 4))
+
+# Factor diagram
+
+fa.diagram(fa_model)
+
+# Factor loadings heatmap
+
+load_matrix <- round(as.matrix(loadings_df), 2)
+
+load_df <- melt(load_matrix)
+colnames(load_df) <- c("Variable", "Factor", "Loading")
+
+ggplot(load_df, aes(x = Factor, y = Variable, fill = Loading)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Factor Loadings Heatmap",
+       x = "Factors",
+       y = "Variables") +
+  theme(
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(angle = 0, size = 10),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+result_clean <- result %>%
+  arrange(Factor, desc(abs(Loading)))
+
+kable(result_clean,
+      caption = "Strong factor loadings for the rotated 7-factor solution",
+      digits = 4) %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+
+
+```{r}
+
+# QUADRATIC DISCRIMINANT ANALYSIS (QDA)
+
+qda_data <- data
+qda_data$risk_level <- as.factor(qda_data$risk_level)
+
+# Numeric predictors 
+qda_num <- qda_data[, sapply(qda_data, is.numeric), drop = FALSE]
+
+# Standardize predictors
+qda_num <- scale(qda_num)
+
+qda_df <- data.frame(qda_num, risk_level = qda_data$risk_level)
+
+cat("\nDimensions of QDA dataset:\n")
+print(dim(qda_df))
+
+cat("\nClass distribution:\n")
+print(table(qda_df$risk_level))
+
+
+# Assumption check : Equality of covariance matrices
+
+library(biotools)
+
+boxm_result <- boxM(qda_num, qda_df$risk_level)
+
+cat("\nBox's M Test for Homogeneity of Covariance Matrices:\n")
+print(boxm_result)
+
+
+# Fit QDA model
+
+library(MASS)
+
+qda_model <- qda(risk_level ~ ., data = qda_df)
+
+cat("\nQDA Model:\n")
+print(qda_model)
+
+# Prior probabilities
+
+cat("\nPrior probabilities of groups:\n")
+print(round(qda_model$prior, 4))
+
+# Cross validation
+
+qda_cv <- qda(risk_level ~ ., data = qda_df, CV = TRUE)
+
+# Confusion matrix
+
+conf_mat_qda <- table(Predicted = qda_cv$class,Actual = qda_df$risk_level)
+
+cat("\nConfusion Matrix:\n")
+print(conf_mat_qda)
+
+# Overall accuracy
+
+qda_accuracy <- mean(qda_cv$class == qda_df$risk_level)
+cat("\nQDA Cross-validated Accuracy:", round(qda_accuracy, 4), "\n")
+
+# Class-wise metrics
+
+actual <- qda_df$risk_level
+pred <- qda_cv$class
+cm <- conf_mat_qda
+
+classes <- levels(actual)
+
+metrics <- data.frame(Class = classes,Precision = NA,Recall = NA,F1 = NA)
+
+for (i in seq_along(classes)) {
+  cls <- classes[i]
+  
+  tp <- cm[cls, cls]
+  fp <- sum(cm[cls, ]) - tp
+  fn <- sum(cm[, cls]) - tp
+  
+  precision <- ifelse((tp + fp) == 0, NA, tp / (tp + fp))
+  recall    <- ifelse((tp + fn) == 0, NA, tp / (tp + fn))
+  f1        <- ifelse(is.na(precision) | is.na(recall) | (precision + recall) == 0,
+                      NA,
+                      2 * precision * recall / (precision + recall))
+  
+  metrics$Precision[i] <- precision
+  metrics$Recall[i] <- recall
+  metrics$F1[i] <- f1
+}
+
+metrics[, 2:4] <- round(metrics[, 2:4], 4)
+
+cat("\nClass-wise Precision, Recall, and F1:\n")
+print(metrics)
+
+# Balanced accuracy
+
+balanced_accuracy <- mean(metrics$Recall, na.rm = TRUE)
+cat("\nBalanced Accuracy:", round(balanced_accuracy, 4), "\n")
+```
+
+
